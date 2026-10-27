@@ -38,7 +38,10 @@ SlashCmdList = {}
 
 local replicate = {}
 local commodityResults = { [2447] = { { unitPrice = 100, quantity = 50 }, { unitPrice = 120, quantity = 100 }, { unitPrice = 900, quantity = 10 } } }
+itemResults = {}
 C_AuctionHouse = {
+	GetNumItemSearchResults = function() return #itemResults end,
+	GetItemSearchResultInfo = function(_, i) local r = itemResults[i]; return { auctionID = r.auctionID, quantity = r.quantity, buyoutAmount = r.buyoutAmount, containsOwnerItem = false } end,
 	ReplicateItems = function() calls.replicate = true end,
 	GetNumReplicateItems = function() return #replicate end,
 	GetReplicateItemInfo = function(i) local r = replicate[i + 1]; return r.name, nil, r.count, nil, nil, nil, nil, nil, nil, r.buyout, nil, nil, nil, nil, nil, nil, r.itemID end,
@@ -135,5 +138,17 @@ money = ns.ReserveCopper() + 1000
 ns.Buyer.ready = { { deal = junk, auctionID = 7, qty = 1, total = 100 } }
 ns.Buyer:Step()
 check(calls.bid and calls.bid[1] == 7, "обычный лот покупается через PlaceBid")
+local spentBefore = ns.Buyer.spent
+check(ns.Buyer.spent == spentBefore and ns.Buyer.placed[7] == 100, "до подтверждения покупка не считается потраченной")
+fire("AUCTION_HOUSE_PURCHASE_COMPLETED", 7)
+check(ns.Buyer.spent == spentBefore + 100, "после AUCTION_HOUSE_PURCHASE_COMPLETED покупка учтена")
+
+-- Стопка больше оставшегося лимита не попадает в очередь.
+itemResults = { { auctionID = 1, quantity = 20, buyoutAmount = 2000 }, { auctionID = 2, quantity = 5, buyoutAmount = 600 } }
+ns.Buyer.ready = {}
+ns.Buyer.bought = {}
+ns.Buyer.searching = { itemID = 5000, maxQty = 10, maxUnit = 150, name = "Gear" }
+fire("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 5000 })
+check(#ns.Buyer.ready == 1 and ns.Buyer.ready[1].auctionID == 2, "стопка 20 при лимите 10 пропущена, стопка 5 взята")
 
 print("все проверки пройдены")

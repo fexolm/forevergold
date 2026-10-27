@@ -18,6 +18,7 @@ Buyer.nextDeal = 1
 Buyer.ready = {}
 Buyer.bought = {}
 Buyer.spent = 0
+Buyer.placed = {} -- [auctionID] = цена; в потраченное идёт только после подтверждения покупки
 
 function Buyer:Reset(deals)
 	self.deals = deals or {}
@@ -110,8 +111,11 @@ ns.On("ITEM_SEARCH_RESULTS_UPDATED", function(itemKey)
 			if r.buyoutAmount / r.quantity > deal.maxUnit then
 				break
 			end
-			table.insert(Buyer.ready, { deal = deal, auctionID = r.auctionID, qty = r.quantity, total = r.buyoutAmount })
-			want = want - r.quantity
+			-- Лот покупается только целиком: стопку больше остатка лимита пропускаем.
+			if r.quantity <= want then
+				table.insert(Buyer.ready, { deal = deal, auctionID = r.auctionID, qty = r.quantity, total = r.buyoutAmount })
+				want = want - r.quantity
+			end
 		end
 	end
 	Buyer:SearchDone()
@@ -171,12 +175,21 @@ function Buyer:Step()
 		self.pending = { itemID = itemID, qty = action.qty, expected = action.total, name = action.deal.name }
 		C_AuctionHouse.StartCommoditiesPurchase(itemID, action.qty, action.unitPrice)
 	else
+		self.placed[action.auctionID] = action.total
 		C_AuctionHouse.PlaceBid(action.auctionID, action.total)
-		self.spent = self.spent + action.total
 	end
 	self:Prefetch()
 	ns.UI:Refresh()
 end
+
+ns.On("AUCTION_HOUSE_PURCHASE_COMPLETED", function(auctionID)
+	local total = Buyer.placed[auctionID]
+	if total then
+		Buyer.placed[auctionID] = nil
+		Buyer.spent = Buyer.spent + total
+		ns.UI:Refresh()
+	end
+end)
 
 ns.On("COMMODITY_PRICE_UPDATED", function(unitPrice, totalPrice)
 	local p = Buyer.pending
