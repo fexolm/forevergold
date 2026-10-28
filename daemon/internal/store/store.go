@@ -209,6 +209,29 @@ func (s *Store) Meta(key string) string {
 	return v
 }
 
+// UseMarket привязывает базу к рынку AHledger. Если рынок в config.json сменился,
+// цены и документы старого рынка удаляются, чтобы графики не смешивали два аукциона.
+// Свои сканы аддона не трогаем: они приходят с того рынка, где играешь.
+func (s *Store) UseMarket(market string) error {
+	if s.Meta("market") == market {
+		return nil
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{`DELETE FROM snapshots`, `DELETE FROM latest`, `DELETE FROM docs`} {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('market', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, market); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // Compact прореживает историю: старше 7 дней одна точка в час, старше 30 дней одна в день.
 // Оставляется первая точка каждого интервала.
 func (s *Store) Compact(now time.Time) error {

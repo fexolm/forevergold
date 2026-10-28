@@ -175,3 +175,31 @@ func TestCompact(t *testing.T) {
 		t.Fatalf("older than 30 days should be daily, got %d", n)
 	}
 }
+
+func TestUseMarketResetsPrices(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now()
+	if err := st.UseMarket("forever/pve/alliance/eu"); err != nil {
+		t.Fatal(err)
+	}
+	st.SavePriceTable(now, []store.PriceRow{{ItemID: 1, Min: 10, Median: 10}})
+	if err := st.UseMarket("forever/pve/alliance/eu"); err != nil {
+		t.Fatal(err)
+	}
+	if pts, _ := st.Series(1, now.Add(-time.Hour)); len(pts) != 1 {
+		t.Fatalf("same market must keep history, got %d points", len(pts))
+	}
+	if err := st.UseMarket("forever/pvp/horde/us"); err != nil {
+		t.Fatal(err)
+	}
+	if pts, _ := st.Series(1, now.Add(-time.Hour)); len(pts) != 0 {
+		t.Fatalf("new market must start clean, got %d points", len(pts))
+	}
+	if l, _ := st.LatestItem(1); l != nil {
+		t.Fatalf("latest of old market must be gone")
+	}
+}
