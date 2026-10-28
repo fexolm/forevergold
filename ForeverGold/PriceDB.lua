@@ -1,7 +1,7 @@
 local _, ns = ...
 
 -- Рыночные цены из двух источников:
---  1. Таблица AHledger (AHLedgerPrices.lua, файла нет в git), которую пишет tools/ahledger-sync.ps1.
+--  1. Таблица AHledger (AHLedgerPrices.lua, файла нет в git), которую пишет демон forevergold.exe.
 --  2. Свои сканы: по каждому предмету храним дневные минимумы за OWN_HISTORY_DAYS дней.
 -- Все цены в меди за штуку.
 local PriceDB = {}
@@ -31,7 +31,8 @@ function PriceDB.ParseAHLedger(raw)
 			local parts = splitKeepEmpty(line, "|")
 			market, time = parts[2], tonumber(parts[3])
 		else
-			local sep = line:match("[|,;\t]")
+			-- AHledger разделяет поля двоеточием; остальные варианты на случай смены формата.
+			local sep = line:match("[:|,;\t]")
 			if sep then
 				local parts = splitKeepEmpty(line, sep)
 				local itemID = tonumber(parts[1])

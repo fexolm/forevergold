@@ -1,0 +1,50 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Addon tests
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1
+          for f in ForeverGold/*.lua; do luac5.1 -p "$f"; done
+          lua5.1 tests/run.lua
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: daemon/go.mod
+          cache-dependency-path: daemon/go.sum
+
+      - name: Daemon tests
+        working-directory: daemon
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./...
+
+      - name: Build forevergold.exe
+        working-directory: daemon
+        run: GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -H=windowsgui" -o ../bin/forevergold.exe ./cmd/forevergold
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forevergold-exe
+          path: bin/forevergold.exe
+
+      - name: Publish latest release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest bin/forevergold.exe --title "Последняя сборка" --notes "Собрано из $GITHUB_SHA" --latest

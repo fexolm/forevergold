@@ -1,35 +1,49 @@
-﻿# Подключает аддон к игре и ставит обновление цен AHledger каждые 30 минут.
-# Запуск из PowerShell (без прав администратора):
-#   powershell -ExecutionPolicy Bypass -File tools\install.ps1 -AddOnsPath "C:\...\_forever_\Interface\AddOns"
+﻿# Ставит ForeverGold: подключает аддон к игре и запускает демон forevergold.exe при входе в Windows.
+# Запуск из PowerShell в папке репозитория (без прав администратора):
+#   powershell -ExecutionPolicy Bypass -File tools\install.ps1 -WowPath "C:\Program Files (x86)\World of Warcraft\_forever_"
 param(
     [Parameter(Mandatory = $true)]
-    [string]$AddOnsPath
+    [string]$WowPath,
+    # Путь к forevergold.exe. По умолчанию ищется в bin\ репозитория.
+    [string]$Exe = ""
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..")
-$source = Join-Path $repo "ForeverGold"
-$link = Join-Path $AddOnsPath "ForeverGold"
-
-if (-not (Test-Path $AddOnsPath)) {
-    throw "Папка не найдена: $AddOnsPath"
+$addOns = Join-Path $WowPath "Interface\AddOns"
+if (-not (Test-Path $addOns)) {
+    throw "Не найдена папка $addOns. WowPath должен указывать на папку клиента Forever (где лежат Interface и WTF)."
 }
 
-# Ссылка вместо копии: git pull в репозитории сразу обновляет аддон в игре.
+# 1. Аддон: ссылка вместо копии, чтобы git pull сразу обновлял его в игре.
+$link = Join-Path $addOns "ForeverGold"
 if (Test-Path $link) {
-    Write-Host "Уже есть: $link"
+    Write-Host "Аддон уже подключён: $link"
 } else {
-    New-Item -ItemType Junction -Path $link -Target $source | Out-Null
-    Write-Host "Аддон подключён: $link -> $source"
+    New-Item -ItemType Junction -Path $link -Target (Join-Path $repo "ForeverGold") | Out-Null
+    Write-Host "Аддон подключён: $link"
 }
 
-$sync = Join-Path $PSScriptRoot "ahledger-sync.ps1"
-& $sync
+# 2. Демон: копируем exe в %LOCALAPPDATA%\ForeverGold, там же база, конфиг и лог.
+if ($Exe -eq "") {
+    $Exe = Join-Path $repo "bin\forevergold.exe"
+}
+if (-not (Test-Path $Exe)) {
+    throw "Нет $Exe. Скачайте forevergold.exe из Releases репозитория в папку bin\ или соберите: cd daemon; go build -ldflags -H=windowsgui -o ..\bin\forevergold.exe .\cmd\forevergold"
+}
+$dataDir = Join-Path $env:LOCALAPPDATA "ForeverGold"
+New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+$target = Join-Path $dataDir "forevergold.exe"
+Get-Process forevergold -ErrorAction SilentlyContinue | Stop-Process -Force
+Copy-Item -Force $Exe $target
 
-$action = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$sync`""
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-    -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration (New-TimeSpan -Days 3650)
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName "ForeverGold AHledger sync" -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
-Write-Host "Задача 'ForeverGold AHledger sync' будет обновлять цены каждые 30 минут"
+# 3. Автозапуск при входе. Старую задачу синка PowerShell-скриптом убираем.
+Unregister-ScheduledTask -TaskName "ForeverGold AHledger sync" -Confirm:$false -ErrorAction SilentlyContinue
+$action = New-ScheduledTaskAction -Execute $target -Argument "-wow `"$WowPath`"" -WorkingDirectory $dataDir
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName "ForeverGold" -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+
+Start-Process -FilePath $target -ArgumentList "-wow `"$WowPath`" -open" -WorkingDirectory $dataDir
+Write-Host "Демон запущен и будет стартовать при входе в Windows. Интерфейс: http://localhost:8765"

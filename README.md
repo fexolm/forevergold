@@ -4,15 +4,28 @@
 
 ## Установка (Windows)
 
-1. Склонировать репозиторий куда угодно.
-2. В PowerShell из папки репозитория:
+1. Склонировать репозиторий.
+2. Скачать `forevergold.exe` из [Releases](https://github.com/fexolm/forevergold/releases/tag/latest) в папку `bin\` репозитория (или собрать: `cd daemon; go build -ldflags -H=windowsgui -o ..\bin\forevergold.exe .\cmd\forevergold`).
+3. В PowerShell из папки репозитория:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File tools\install.ps1 -AddOnsPath "C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns"
+   powershell -ExecutionPolicy Bypass -File tools\install.ps1 -WowPath "C:\Program Files (x86)\World of Warcraft\_forever_"
    ```
 
-   Путь к `AddOns` подставьте свой. Скрипт делает ссылку на папку `ForeverGold` (после `git pull` аддон в игре обновится сам), один раз скачивает цены AHledger и ставит задачу в Планировщик, которая обновляет их каждые 30 минут.
-3. В игре новые цены подхватываются при входе или по `/reload`.
+   `WowPath` это папка клиента Forever, где лежат `Interface` и `WTF`. Скрипт подключает аддон ссылкой (после `git pull` он обновится в игре сам), копирует демон в `%LOCALAPPDATA%\ForeverGold`, ставит его в автозапуск при входе в Windows и открывает интерфейс.
+
+## Демон и веб-интерфейс
+
+`forevergold.exe` работает в фоне и открывает анализ рынка на http://localhost:8765.
+
+- Каждые 15 минут скачивает таблицу цен AHledger и сохраняет каждый снимок, так копится интрадей-история по всем предметам. Старше 7 дней история сжимается до часовых точек, старше 30 дней до дневных.
+- Там же раз в 15 минут забирает сделки, сигналы, структуру рынка и крафт по профессиям из `config.json`.
+- Пишет цены в аддон (`ForeverGold\AHLedgerPrices.lua`), игра подхватывает их при входе или `/reload`.
+- После полного скана в аддоне и `/reload` (или выхода из игры) забирает стаканы по каждому предмету и русские названия.
+
+В интерфейсе: обзор с отклонениями от медианы, карточка предмета с графиком цены и объёма за день, 7 дней, месяц и 3 месяца, стакан последнего скана, сделки, сигналы, структура рынка и крафт.
+
+Настройки в `%LOCALAPPDATA%\ForeverGold\config.json`: рынок (`market`), профессии (`professions`), адрес интерфейса (`listen`). Лог там же, `forevergold.log`.
 
 ## Как пользоваться
 
@@ -35,13 +48,14 @@
 
 ## Откуда цены
 
-- [AHledger](https://ahledger.com): медиана за 7 дней и продажи в день по рынку `forever.normal.alliance.eu`. Рынок меняется параметром `-Market` у `tools/ahledger-sync.ps1`.
+- [AHledger](https://ahledger.com): медиана за 7 дней и продажи в день по рынку `forever.normal.alliance.eu`. Рынок меняется в `config.json` демона.
 - Свои сканы: дневные минимумы за 14 дней. Используются, если AHledger про предмет ничего не знает.
 
 ## Проверка логики
 
 ```
 lua5.1 tests/run.lua
+cd daemon && go test ./...
 ```
 
-Тест прогоняет разбор цен, скан, поиск сделок и кнопку покупки на заглушках WoW API.
+Первый тест прогоняет аддон на заглушках WoW API, второй проверяет демон на тестовом сервере с форматом AHledger.

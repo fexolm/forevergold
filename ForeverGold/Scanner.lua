@@ -66,6 +66,7 @@ function Scanner:Process()
 			result[itemID] = { name = agg.name, min = agg.min, qty = agg.qty }
 		end
 		self.last = result
+		Scanner.Export(time(), byItem)
 		self.running = false
 		ns.Print("скан готов: %d лотов", total)
 		ns.Deals:Rebuild()
@@ -126,3 +127,47 @@ ns.On("AUCTION_HOUSE_CLOSED", function()
 		Scanner.running = false
 	end
 end)
+
+-- Экспорт для локального демона: стакан по каждому предмету и названия на языке клиента.
+-- Игра пишет SavedVariables при выходе или /reload, демон забирает оттуда последние сканы.
+local EXPORT_SCANS = 3
+local BOOK_LEVELS = 30
+
+-- Стакан одной строкой: "min,qty;цена:штук;цена:штук..." по возрастанию цены, цены за штуку в меди.
+function Scanner.EncodeBook(agg)
+	local levels = {}
+	for _, lot in ipairs(agg.lots) do
+		local price = math.floor(lot[1] + 0.5)
+		levels[price] = (levels[price] or 0) + lot[2]
+	end
+	local prices = {}
+	for price in pairs(levels) do
+		table.insert(prices, price)
+	end
+	table.sort(prices)
+	local parts = { string.format("%d,%d", math.floor(agg.min + 0.5), agg.qty) }
+	for i = 1, math.min(#prices, BOOK_LEVELS) do
+		table.insert(parts, string.format("%d:%d", prices[i], levels[prices[i]]))
+	end
+	return table.concat(parts, ";")
+end
+
+function Scanner.Export(t, byItem)
+	local export = ForeverGoldDB.export or {}
+	ForeverGoldDB.export = export
+	export.version = 1
+	export.scans = export.scans or {}
+	export.names = export.names or {}
+
+	local items = {}
+	for itemID, agg in pairs(byItem) do
+		items[itemID] = Scanner.EncodeBook(agg)
+		if agg.name then
+			export.names[itemID] = agg.name
+		end
+	end
+	table.insert(export.scans, { t = t, items = items })
+	while #export.scans > EXPORT_SCANS do
+		table.remove(export.scans, 1)
+	end
+end

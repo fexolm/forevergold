@@ -66,7 +66,7 @@ local function fire(e, ...)
 	if f then f.OnEvent(f, e, ...) end
 end
 
-ForeverGold_AHLedgerRaw = "AHL1|forever/normal/alliance/eu|" .. (now - 600) .. "|2\n2447|300|250|1000|300|310|200|400|500\n3000|||||||| \n"
+ForeverGold_AHLedgerRaw = "AHL1|forever/normal/alliance/eu|" .. (now - 600) .. "|2\n2447:300:250:1000:300:310:200:400:500\n3000::::::::\n"
 
 local ns = {}
 for _, file in ipairs({ "Config", "Core", "PriceDB", "Scanner", "Deals", "Buyer", "UI" }) do
@@ -93,6 +93,9 @@ check(calls.replicate, "скан вызывает ReplicateItems")
 fire("REPLICATE_ITEM_LIST_UPDATE")
 runTimers(function() return ns.Scanner.last ~= nil end)
 check(ns.Scanner.last[2447].min == 100 and ns.Scanner.last[2447].qty == 150, "скан: минимум и количество")
+local exp = ForeverGoldDB.export
+check(exp and #exp.scans == 1 and exp.scans[1].items[2447] == "100,150;100:50;120:100", "экспорт стакана: min,qty и уровни цен")
+check(exp.names[2447] == "Peacebloom", "экспорт названий")
 check(#ns.Deals.list == 2, "найдены 2 сделки: рынок и вендор, обычный лот пропущен")
 local herb, junk
 for _, d in ipairs(ns.Deals.list) do
