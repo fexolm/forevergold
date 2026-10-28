@@ -106,6 +106,9 @@ func (a *App) report(job string, note string, err error) {
 
 // Run крутит все фоновые задачи до отмены контекста.
 func (a *App) Run(ctx context.Context) {
+	if err := a.Store.UseMarket(a.Cfg.Market); err != nil {
+		a.report("pricetable", "", fmt.Errorf("смена рынка: %w", err))
+	}
 	var wg sync.WaitGroup
 	loop := func(every time.Duration, fn func(context.Context)) {
 		wg.Add(1)
