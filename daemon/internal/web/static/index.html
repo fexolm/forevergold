@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ForeverGold</title>
+<link rel="stylesheet" href="uPlot.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+	<strong>ForeverGold</strong>
+	<nav id="tabs">
+		<a href="#/" data-tab="overview">Обзор</a>
+		<a href="#/item" data-tab="item">Предмет</a>
+		<a href="#/doc/deals" data-tab="deals">Сделки</a>
+		<a href="#/doc/signals" data-tab="signals">Сигналы</a>
+		<a href="#/crafting" data-tab="crafting">Крафт</a>
+		<a href="#/doc/structure" data-tab="structure">Структура</a>
+	</nav>
+	<span id="market" class="muted"></span>
+	<button id="sync" type="button">Синк сейчас</button>
+</header>
+<main id="view"></main>
+<footer class="muted">Данные рынка: <a href="https://ahledger.com" target="_blank" rel="noopener">AHledger</a> и ваши сканы аддоном. Цены в золоте.</footer>
+<script src="uPlot.iife.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
