@@ -69,7 +69,7 @@ end
 ForeverGold_AHLedgerRaw = "AHL1|forever/normal/alliance/eu|" .. (now - 600) .. "|2\n2447:300:250:1000:300:310:200:400:500\n3000::::::::\n"
 
 local ns = {}
-for _, file in ipairs({ "Config", "Core", "PriceDB", "Scanner", "Deals", "Buyer", "UI" }) do
+for _, file in ipairs({ "Config", "Core", "PriceDB", "Scanner", "Names", "Deals", "Buyer", "UI" }) do
 	assert(loadfile("ForeverGold/" .. file .. ".lua"))("ForeverGold", ns)
 end
 
@@ -153,5 +153,21 @@ ns.Buyer.bought = {}
 ns.Buyer.searching = { itemID = 5000, maxQty = 10, maxUnit = 150, name = "Gear" }
 fire("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 5000 })
 check(#ns.Buyer.ready == 1 and ns.Buyer.ready[1].auctionID == 2, "стопка 20 при лимите 10 пропущена, стопка 5 взята")
+
+-- Названия: из кэша клиента сразу, остальные после GET_ITEM_INFO_RECEIVED.
+local clientNames = { [3000] = "Хлам" }
+C_Item.GetItemNameByID = function(id) return clientNames[id] end
+local requested = {}
+C_Item.RequestLoadItemDataByID = function(id) requested[id] = true end
+ForeverGoldDB.export.names = {}
+ForeverGold_WantNames = { 7000 }
+ns.Names:Start()
+ns.Names:Step()
+check(ForeverGoldDB.export.names[3000] == "Хлам", "название из кэша клиента")
+check(requested[2447] and ForeverGoldDB.export.names[2447] == nil, "незагруженный предмет запрошен у клиента")
+check(requested[7000], "предметы из списка демона тоже запрошены")
+clientNames[2447] = "Мироцвет"
+fire("GET_ITEM_INFO_RECEIVED", 2447, true)
+check(ForeverGoldDB.export.names[2447] == "Мироцвет", "название после GET_ITEM_INFO_RECEIVED")
 
 print("все проверки пройдены")

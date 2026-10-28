@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/fexolm/forevergold/daemon/internal/app"
 )
@@ -17,8 +16,9 @@ import (
 var static embed.FS
 
 type Server struct {
-	App  *app.App
-	opps oppCache
+	App     *app.App
+	opps    oppCache
+	markets marketCache
 }
 
 func (s *Server) Handler() http.Handler {
@@ -32,6 +32,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/item/{id}/forecast", s.forecast)
 	mux.HandleFunc("GET /api/opportunities", s.opportunities)
 	mux.HandleFunc("GET /api/doc/{kind}", s.doc)
+	mux.HandleFunc("GET /api/instruments", s.instruments)
+	mux.HandleFunc("GET /api/markets", s.marketsHandler)
+	mux.HandleFunc("POST /api/market", s.setMarket)
 	mux.HandleFunc("POST /api/sync", s.sync)
 	return mux
 }
@@ -47,18 +50,29 @@ func writeJSON(w http.ResponseWriter, v any, err error) {
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	counts, err := s.App.Store.Counts()
+	market := s.App.Market()
+	label, status := market, ""
+	if list, err := s.marketList(r.Context()); err == nil {
+		for _, m := range list {
+			if m.ID == market {
+				label, status = m.Label, m.Status
+			}
+		}
+	}
+	var asOf int64
+	if t := s.App.Store.PricesAsOf(); !t.IsZero() {
+		asOf = t.Unix()
+	}
 	writeJSON(w, map[string]any{
-		"market":      s.App.Cfg.Market,
-		"wowPath":     s.App.Cfg.WowPath,
-		"professions": s.App.Cfg.Professions,
-		"jobs":        s.App.Status(),
-		"counts":      counts,
+		"market":       market,
+		"marketLabel":  label,
+		"marketStatus": status,
+		"pricesAsOf":   asOf,
+		"wowPath":      s.App.Cfg.WowPath,
+		"professions":  s.App.Cfg.Professions,
+		"jobs":         s.App.Status(),
+		"counts":       counts,
 	}, err)
-}
-
-func (s *Server) search(w http.ResponseWriter, r *http.Request) {
-	list, err := s.App.Store.Search(r.URL.Query().Get("q"), 50)
-	writeJSON(w, list, err)
 }
 
 func (s *Server) movers(w http.ResponseWriter, r *http.Request) {
@@ -67,62 +81,29 @@ func (s *Server) movers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, list, err)
 }
 
-var ranges = map[string]time.Duration{
-	"1d":  24 * time.Hour,
-	"7d":  7 * 24 * time.Hour,
-	"30d": 30 * 24 * time.Hour,
-	"90d": 90 * 24 * time.Hour,
-}
-
-func (s *Server) item(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		http.Error(w, "bad id", http.StatusBadRequest)
-		return
-	}
-	span, ok := ranges[r.URL.Query().Get("range")]
-	if !ok {
-		span = ranges["7d"]
-	}
-	since := time.Now().Add(-span)
-	st := s.App.Store
-
-	latest, err := st.LatestItem(id)
-	if err != nil {
-		writeJSON(w, nil, err)
-		return
-	}
-	series, err := st.Series(id, since)
-	if err != nil {
-		writeJSON(w, nil, err)
-		return
-	}
-	own, err := st.OwnSeries(id, since)
-	if err != nil {
-		writeJSON(w, nil, err)
-		return
-	}
-	// Стакан берём из последнего своего скана, в истории оставляем только min/qty.
-	var book []app.Level
-	var bookTime int64
-	if len(own) == 0 {
-		if last, err := st.OwnSeries(id, time.Unix(0, 0)); err == nil && len(last) > 0 {
-			own = nil
-			book, bookTime = app.ParseBook(last[len(last)-1].Book), last[len(last)-1].T
+// fillSignalPrices: AHledger отдаёт median и base только у сигналов, которые срабатывают сегодня.
+// Остальным подставляем свои последние медиану и медиану за 30 дней, чтобы колонки не были пустыми.
+func (s *Server) fillSignalPrices(doc any) {
+	m, _ := doc.(map[string]any)
+	list, _ := m["signals"].([]any)
+	for _, v := range list {
+		sig, _ := v.(map[string]any)
+		item, _ := sig["item"].(map[string]any)
+		id, ok := item["id"].(float64)
+		if !ok || (sig["median"] != nil && sig["base"] != nil) {
+			continue
 		}
-	} else {
-		book, bookTime = app.ParseBook(own[len(own)-1].Book), own[len(own)-1].T
+		l, err := s.App.Store.LatestItem(int64(id))
+		if err != nil || l == nil {
+			continue
+		}
+		if sig["median"] == nil && l.Median > 0 {
+			sig["median"] = l.Median
+		}
+		if sig["base"] == nil && l.Median30 > 0 {
+			sig["base"] = l.Median30
+		}
 	}
-	for i := range own {
-		own[i].Book = ""
-	}
-	writeJSON(w, map[string]any{
-		"latest":   latest,
-		"series":   series,
-		"own":      own,
-		"book":     book,
-		"bookTime": bookTime,
-	}, nil)
 }
 
 func (s *Server) doc(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +115,18 @@ func (s *Server) doc(w http.ResponseWriter, r *http.Request) {
 	if body == "" {
 		http.Error(w, "нет данных: синк ещё не отработал", http.StatusNotFound)
 		return
+	}
+	var parsed any
+	if json.Unmarshal([]byte(body), &parsed) == nil {
+		if names, err := s.App.Store.RuNames(); err == nil {
+			addRuNames(parsed, names)
+		}
+		if r.PathValue("kind") == "signals" {
+			s.fillSignalPrices(parsed)
+		}
+		if b, err := json.Marshal(parsed); err == nil {
+			body = string(b)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Fetched-At", strconv.FormatInt(t.Unix(), 10))

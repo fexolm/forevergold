@@ -3,28 +3,71 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ForeverGold</title>
+<meta name="color-scheme" content="dark">
+<title>ForeverGold · терминал</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23e8b84a'/%3E%3Cpath d='M11 22V10h10M11 16h7' stroke='%2314110a' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="uPlot.min.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-	<strong>ForeverGold</strong>
-	<nav id="tabs">
-		<a href="#/" data-tab="overview">Обзор</a>
-		<a href="#/item" data-tab="item">Предмет</a>
-		<a href="#/forecasts" data-tab="forecasts">Прогнозы</a>
-		<a href="#/doc/deals" data-tab="deals">Сделки</a>
-		<a href="#/doc/signals" data-tab="signals">Сигналы</a>
-		<a href="#/crafting" data-tab="crafting">Крафт</a>
-		<a href="#/doc/structure" data-tab="structure">Структура</a>
-	</nav>
-	<span id="market" class="muted"></span>
-	<button id="sync" type="button">Синк сейчас</button>
-</header>
-<main id="view"></main>
-<footer class="muted">Данные рынка: <a href="https://ahledger.com" target="_blank" rel="noopener">AHledger</a> и ваши сканы аддоном. Цены в золоте.</footer>
+<div id="app">
+	<header class="top">
+		<div class="brand" title="ForeverGold: аналитика аукциона WoW: Forever">
+			<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd978"/><stop offset="1" stop-color="#c8902a"/></linearGradient></defs><circle cx="16" cy="16" r="14" fill="url(#lg)"/><path d="M11 22V10h10M11 16h7" stroke="#1a1408" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+			<span class="brand-n">ForeverGold</span><span class="brand-s">терминал</span>
+		</div>
+		<div class="mkt" id="mkt">
+			<button class="mkt-btn" id="mkt-btn" type="button"></button>
+			<div class="mkt-menu" id="mkt-menu"></div>
+		</div>
+		<span class="pill fresh" id="fresh"><span class="dot"></span>…</span>
+		<div class="search" id="search">
+			<svg class="s-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+			<input id="q" type="text" placeholder="Поиск предмета: название, English, ID" autocomplete="off" spellcheck="false">
+			<kbd>/</kbd>
+			<div class="sdrop" id="sdrop"></div>
+		</div>
+		<div class="top-r">
+			<span class="dstat" id="daemon"><span class="dot"></span>демон</span>
+			<button class="btn" id="sync" type="button" title="Запустить синк с AHledger и чтение сканов аддона">
+				<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 0 1-9.6 3.7M2.5 8a5.5 5.5 0 0 1 9.6-3.7"/><path d="M12.5 1.5v3h-3M3.5 14.5v-3h3"/></svg>Синк
+			</button>
+		</div>
+	</header>
+	<div id="banner" class="banners"></div>
+
+	<aside class="wl panel" id="wl">
+		<div class="p-h">
+			<span class="p-t">Вотчлист</span><span class="p-c" id="wl-count"></span>
+			<span class="sp"></span>
+			<button class="chip sm" id="wl-cheap" type="button" title="Только «дёшево»: скидка к медиане 30д ≥ 15%"><span class="sw cheap"></span>Дёшево</button>
+		</div>
+		<div class="wl-f">
+			<input id="wl-filter" type="text" placeholder="Фильтр" autocomplete="off" spellcheck="false">
+		</div>
+		<div class="wl-head" id="wl-head"></div>
+		<div class="wl-list" id="wl-list" tabindex="0"></div>
+	</aside>
+
+	<main class="center panel" id="center">
+		<div class="ihead" id="ihead"></div>
+		<div class="itool" id="itool"></div>
+		<div id="inotice"></div>
+		<div class="ichart" id="ichart"></div>
+	</main>
+
+	<aside class="side panel" id="side"></aside>
+
+	<section class="bottom panel" id="bottom">
+		<nav class="tabbar" id="tabbar"></nav>
+		<div class="tabbody" id="tabbody"></div>
+	</section>
+</div>
+<div class="toast" id="toast"></div>
 <script src="uPlot.iife.min.js"></script>
+<script src="util.js"></script>
+<script src="chart.js"></script>
+<script src="tabs.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

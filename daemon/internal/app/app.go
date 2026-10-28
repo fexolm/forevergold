@@ -17,6 +17,7 @@ import (
 	"github.com/fexolm/forevergold/daemon/internal/ahledger"
 	"github.com/fexolm/forevergold/daemon/internal/savedvars"
 	"github.com/fexolm/forevergold/daemon/internal/store"
+	"github.com/fexolm/forevergold/daemon/internal/wowhead"
 )
 
 type Config struct {
@@ -44,9 +45,15 @@ const (
 )
 
 type App struct {
-	Cfg    Config
-	Store  *store.Store
-	Client *ahledger.Client
+	Cfg     Config
+	Store   *store.Store
+	Client  *ahledger.Client
+	Wowhead *wowhead.Client
+	// SaveConfig сохраняет config.json при смене рынка из интерфейса.
+	SaveConfig func(Config) error
+
+	// resync будит синк цен и справки после смены рынка.
+	resync chan struct{}
 
 	mu     sync.Mutex
 	status map[string]JobStatus
@@ -69,10 +76,42 @@ func New(cfg Config, st *store.Store) *App {
 		Cfg:      cfg,
 		Store:    st,
 		Client:   ahledger.New(cfg.APIBase),
+		Wowhead:  wowhead.New(),
+		resync:   make(chan struct{}, 1),
 		status:   map[string]JobStatus{},
 		svMod:    map[string]time.Time{},
 		docPause: 2 * time.Second,
 	}
+}
+
+// Market: текущий рынок AHledger (может смениться из интерфейса).
+func (a *App) Market() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.Cfg.Market
+}
+
+// SetMarket переключает рынок: чистит цены старого, сохраняет config.json и запускает синк.
+func (a *App) SetMarket(market string) error {
+	if err := a.Store.UseMarket(market); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.Cfg.Market = market
+	cfg := a.Cfg
+	a.lastTable = nil
+	a.status = map[string]JobStatus{}
+	a.mu.Unlock()
+	if a.SaveConfig != nil {
+		if err := a.SaveConfig(cfg); err != nil {
+			return err
+		}
+	}
+	select {
+	case a.resync <- struct{}{}:
+	default:
+	}
+	return nil
 }
 
 func (a *App) Status() map[string]JobStatus {
@@ -106,9 +145,11 @@ func (a *App) report(job string, note string, err error) {
 
 // Run крутит все фоновые задачи до отмены контекста.
 func (a *App) Run(ctx context.Context) {
-	if err := a.Store.UseMarket(a.Cfg.Market); err != nil {
+	if err := a.Store.UseMarket(a.Market()); err != nil {
 		a.report("pricetable", "", fmt.Errorf("смена рынка: %w", err))
 	}
+	// Справка и история берут список предметов из таблицы цен, поэтому она первая.
+	a.SyncPriceTable(ctx)
 	var wg sync.WaitGroup
 	loop := func(every time.Duration, fn func(context.Context)) {
 		wg.Add(1)
@@ -128,14 +169,31 @@ func (a *App) Run(ctx context.Context) {
 		}()
 	}
 	loop(priceInterval, a.SyncPriceTable)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-a.resync:
+				a.SyncPriceTable(ctx)
+				a.SyncCatalog(ctx)
+				a.SyncDocs(ctx)
+				a.SyncBackfill(ctx)
+			}
+		}
+	}()
 	loop(docsInterval, a.SyncDocs)
 	loop(addonInterval, a.SyncAddon)
+	loop(catalogInterval, a.SyncCatalog)
+	loop(backfillInterval, a.SyncBackfill)
 	loop(compactInterval, func(context.Context) { a.report("compact", "", a.Store.Compact(time.Now())) })
 	wg.Wait()
 }
 
 func (a *App) SyncPriceTable(ctx context.Context) {
-	raw, err := a.Client.Get(ctx, "/v1/pricetable/"+a.Cfg.Market)
+	raw, err := a.Client.Get(ctx, "/v1/pricetable/"+a.Market())
 	if errors.Is(err, ahledger.ErrNotModified) {
 		a.report("pricetable", "без изменений", nil)
 		return
@@ -175,12 +233,13 @@ func (a *App) SyncPriceTable(ctx context.Context) {
 
 // docPaths: какие JSON-эндпоинты держим локально. Ключ = вид документа для веб-интерфейса.
 func (a *App) docPaths() map[string]string {
-	m := a.Cfg.Market
+	m := a.Market()
 	paths := map[string]string{
-		"deals":     "/v1/deals/" + m + "?discount=25&sells=1&limit=200",
-		"signals":   "/v1/signals/" + m + "?discount=20&days=7",
-		"structure": "/v1/structure/" + m,
-		"economy":   "/v1/economy/" + m,
+		"deals":      "/v1/deals/" + m + "?discount=25&sells=1&limit=200",
+		"signals":    "/v1/signals/" + m + "?discount=20&days=7",
+		"structure":  "/v1/structure/" + m,
+		"economy":    "/v1/economy/" + m,
+		"disenchant": "/v1/disenchant/" + m,
 	}
 	for _, p := range a.Cfg.Professions {
 		paths["crafting-"+p] = "/v1/crafting/" + m + "?profession=" + url.QueryEscape(p) + "&all=1"
@@ -237,6 +296,19 @@ func (a *App) WriteAddonPrices(pt *ahledger.PriceTable) error {
 	text := strings.ReplaceAll(string(pt.Raw), "]==]", "")
 	lua := fmt.Sprintf("-- Сгенерировано forevergold.exe %s. Данные: https://ahledger.com\nForeverGold_AHLedgerRaw = [==[\n%s\n]==]\n",
 		time.Now().Format(time.RFC3339), text)
+	// Предметы без названия из клиента: аддон спросит их у игры (новых предметов Forever нет на Wowhead).
+	if want, err := a.Store.WantNames(50000); err == nil && len(want) > 0 {
+		var b strings.Builder
+		b.WriteString("ForeverGold_WantNames = {")
+		for i, id := range want {
+			if i%20 == 0 {
+				b.WriteString("\n")
+			}
+			fmt.Fprintf(&b, "%d,", id)
+		}
+		b.WriteString("\n}\n")
+		lua += b.String()
+	}
 	return writeAtomic(filepath.Join(dir, "AHLedgerPrices.lua"), []byte(lua))
 }
 

@@ -76,6 +76,7 @@ func main() {
 	defer st.Close()
 
 	a := app.New(cfg, st)
+	a.SaveConfig = func(c app.Config) error { return saveConfig(cfgPath, c) }
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	go a.Run(ctx)

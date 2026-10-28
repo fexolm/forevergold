@@ -25,6 +25,7 @@ type Client struct {
 
 	mu    sync.Mutex
 	etags map[string]string
+	next  time.Time
 }
 
 func New(baseURL string) *Client {
@@ -40,13 +41,43 @@ func New(baseURL string) *Client {
 
 // Get скачивает путь API. Если ответ не менялся с прошлого раза, возвращает ErrNotModified.
 func (c *Client) Get(ctx context.Context, path string) ([]byte, error) {
+	return c.get(ctx, path, true)
+}
+
+// Fetch скачивает путь API без ETag: для справочных запросов, которые нужны каждый раз целиком.
+func (c *Client) Fetch(ctx context.Context, path string) ([]byte, error) {
+	return c.get(ctx, path, false)
+}
+
+// wait держит не больше 4 запросов в секунду (лимит API 300 в минуту).
+func (c *Client) wait(ctx context.Context) error {
+	c.mu.Lock()
+	now := time.Now()
+	if c.next.Before(now) {
+		c.next = now
+	}
+	at := c.next
+	c.next = c.next.Add(250 * time.Millisecond)
+	c.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Until(at)):
+		return nil
+	}
+}
+
+func (c *Client) get(ctx context.Context, path string, useETag bool) ([]byte, error) {
+	if err := c.wait(ctx); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "ForeverGold-daemon (+https://github.com/fexolm/forevergold)")
 	c.mu.Lock()
-	if tag := c.etags[path]; tag != "" {
+	if tag := c.etags[path]; useETag && tag != "" {
 		req.Header.Set("If-None-Match", tag)
 	}
 	c.mu.Unlock()
@@ -71,7 +102,7 @@ func (c *Client) Get(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if tag := resp.Header.Get("ETag"); tag != "" {
+	if tag := resp.Header.Get("ETag"); useETag && tag != "" {
 		c.mu.Lock()
 		c.etags[path] = tag
 		c.mu.Unlock()
