@@ -85,12 +85,15 @@ function table(columns, rows, onRow) {
 // ---------- Обзор ----------
 
 async function showOverview() {
-	const [status, movers] = await Promise.all([api("/api/status"), api("/api/movers")]);
+	const [status, movers, deals] = await Promise.all([api("/api/status"), api("/api/movers"), api("/api/doc/deals").catch(() => null)]);
 	const jobs = Object.entries(status.jobs).map(([name, j]) => ({
 		name, ok: j.lastOk ? ago(Date.parse(j.lastOk) / 1000) : "никогда", note: j.note || "", error: j.error || "",
 	}));
 	const c = status.counts || {};
 	view.replaceChildren(
+		marketClosed(deals) ? panel("Рынок ещё не открыт",
+			el("p", {}, `AHledger пишет, что ${deals.marketLabel || status.market} ещё не открыт, поэтому цен, графиков и прогнозов пока нет. Демон уже работает и начнёт копить историю сам, как только появятся первые сканы.`),
+			el("p", { class: "muted" }, "Свои сканы аддоном попадают сюда сразу: стакан предмета на его странице появится после полного скана на аукционе и /reload.")) : "",
 		panel("Состояние",
 			el("div", { class: "grid" },
 				stat("Рынок", status.market, "small"),
@@ -449,8 +452,25 @@ async function showDoc(kind, title) {
 	const notes = Array.isArray(doc.notes) ? el("ul", { class: "muted" }, doc.notes.map(n => el("li", {}, n))) : "";
 	const body = rows.length
 		? table(autoColumns(rows), rows, r => { const id = rowItemId(r); if (id) itemLink(id); })
-		: el("pre", { style: "white-space:pre-wrap" }, JSON.stringify(doc, null, 2).slice(0, 20000));
+		: emptyDoc(doc);
 	view.replaceChildren(panel(title || DOC_TITLES[kind] || kind, meta, notes, body));
+}
+
+// Пустой ответ AHledger: объясняем причину словами, сырой JSON прячем под спойлер.
+function emptyDoc(doc) {
+	const closed = marketClosed(doc);
+	const text = closed
+		? `Рынок ${doc.marketLabel || doc.market} ещё не открыт, поэтому у AHledger по нему пока нет цен. Данные появятся сами после открытия серверов.`
+		: "AHledger пока ничего не нашёл по этому запросу." + (doc && doc.message ? " Ответ сервиса: " + doc.message : "");
+	return el("div", {},
+		el("p", {}, text),
+		doc && doc.page ? el("p", {}, el("a", { href: doc.page, target: "_blank", rel: "noopener" }, "Открыть на AHledger")) : "",
+		el("details", { class: "muted" }, el("summary", {}, "Ответ сервиса целиком"),
+			el("pre", { class: "raw" }, JSON.stringify(doc, null, 2).slice(0, 20000))));
+}
+
+function marketClosed(doc) {
+	return !!(doc && typeof doc.marketStatus === "string" && /not open/i.test(doc.marketStatus));
 }
 
 async function showCrafting(prof) {

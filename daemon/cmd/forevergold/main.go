@@ -133,7 +133,7 @@ func detectWow() string {
 	}
 	roots = append(roots, `C:\World of Warcraft`, `D:\World of Warcraft`, `D:\Games\World of Warcraft`)
 	for _, root := range roots {
-		for _, flavor := range []string{"_forever_", "_forever"} {
+		for _, flavor := range []string{"_forever_", "_forever", "_classic_beta_"} {
 			dir := filepath.Join(root, flavor)
 			if info, err := os.Stat(filepath.Join(dir, "Interface")); err == nil && info.IsDir() {
 				return dir
