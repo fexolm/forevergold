@@ -348,6 +348,16 @@ func (s *Store) Movers(minSales10 int64, limit int) ([]Latest, error) {
 	return scanLatest(rows)
 }
 
+// Liquid: самые продаваемые предметы с продажами не меньше minSales10/10 в день.
+func (s *Store) Liquid(minSales10 int64, limit int) ([]Latest, error) {
+	rows, err := s.DB.Query(`SELECT `+latestCols+` FROM latest l LEFT JOIN items i ON i.item_id = l.item_id
+		WHERE l.sales10 >= ? ORDER BY l.sales10 DESC LIMIT ?`, minSales10, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanLatest(rows)
+}
+
 func (s *Store) Counts() (map[string]int64, error) {
 	out := map[string]int64{}
 	for _, table := range []string{"snapshots", "latest", "own_scans", "items"} {

@@ -17,7 +17,8 @@ import (
 var static embed.FS
 
 type Server struct {
-	App *app.App
+	App  *app.App
+	opps oppCache
 }
 
 func (s *Server) Handler() http.Handler {
@@ -28,6 +29,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/search", s.search)
 	mux.HandleFunc("GET /api/movers", s.movers)
 	mux.HandleFunc("GET /api/item/{id}", s.item)
+	mux.HandleFunc("GET /api/item/{id}/forecast", s.forecast)
+	mux.HandleFunc("GET /api/opportunities", s.opportunities)
 	mux.HandleFunc("GET /api/doc/{kind}", s.doc)
 	mux.HandleFunc("POST /api/sync", s.sync)
 	return mux
