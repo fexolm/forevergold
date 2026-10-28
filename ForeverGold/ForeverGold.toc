@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: ForeverGold
+## Notes: Скан аукциона, поиск дешёвых лотов и быстрая покупка для WoW Forever
+## Author: fexolm
+## Version: 0.1.0
+## SavedVariables: ForeverGoldDB
+
+Config.lua
+AHLedgerPrices.lua
+Core.lua
+PriceDB.lua
+Scanner.lua
+Deals.lua
+Buyer.lua
+UI.lua
