@@ -81,6 +81,31 @@ func (s *Server) movers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, list, err)
 }
 
+// fillSignalPrices: AHledger отдаёт median и base только у сигналов, которые срабатывают сегодня.
+// Остальным подставляем свои последние медиану и медиану за 30 дней, чтобы колонки не были пустыми.
+func (s *Server) fillSignalPrices(doc any) {
+	m, _ := doc.(map[string]any)
+	list, _ := m["signals"].([]any)
+	for _, v := range list {
+		sig, _ := v.(map[string]any)
+		item, _ := sig["item"].(map[string]any)
+		id, ok := item["id"].(float64)
+		if !ok || (sig["median"] != nil && sig["base"] != nil) {
+			continue
+		}
+		l, err := s.App.Store.LatestItem(int64(id))
+		if err != nil || l == nil {
+			continue
+		}
+		if sig["median"] == nil && l.Median > 0 {
+			sig["median"] = l.Median
+		}
+		if sig["base"] == nil && l.Median30 > 0 {
+			sig["base"] = l.Median30
+		}
+	}
+}
+
 func (s *Server) doc(w http.ResponseWriter, r *http.Request) {
 	t, body, err := s.App.Store.Doc(r.PathValue("kind"))
 	if err != nil {
@@ -92,8 +117,13 @@ func (s *Server) doc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var parsed any
-	if names, err := s.App.Store.RuNames(); err == nil && len(names) > 0 && json.Unmarshal([]byte(body), &parsed) == nil {
-		addRuNames(parsed, names)
+	if json.Unmarshal([]byte(body), &parsed) == nil {
+		if names, err := s.App.Store.RuNames(); err == nil {
+			addRuNames(parsed, names)
+		}
+		if r.PathValue("kind") == "signals" {
+			s.fillSignalPrices(parsed)
+		}
 		if b, err := json.Marshal(parsed); err == nil {
 			body = string(b)
 		}
