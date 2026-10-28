@@ -83,10 +83,36 @@ func (s *Store) MissingMeta(limit int) ([]int64, error) {
 		WHERE i.item_id IS NULL OR i.meta_t = 0 ORDER BY l.sales10 DESC LIMIT ?`, limit)
 }
 
-// MissingRu: предметы без русского названия, которые ещё не искали на Wowhead.
+// MissingRu: предметы без русского названия, которые ещё не искали на Wowhead; ходовые первыми.
 func (s *Store) MissingRu(limit int) ([]int64, error) {
-	return s.ids(`SELECT l.item_id FROM latest l LEFT JOIN items i ON i.item_id = l.item_id
-		WHERE COALESCE(i.name, '') = '' AND COALESCE(i.ru_tried, 0) = 0 ORDER BY l.sales10 DESC LIMIT ?`, limit)
+	return s.ids(`SELECT i.item_id FROM items i LEFT JOIN latest l ON l.item_id = i.item_id
+		WHERE i.name = '' AND i.ru_tried = 0 ORDER BY COALESCE(l.sales10, -1) DESC, COALESCE(l.qty, -1) DESC LIMIT ?`, limit)
+}
+
+// WantNames: предметы, чьё название ещё не приходило из клиента игры; их спрашивает аддон.
+func (s *Store) WantNames(limit int) ([]int64, error) {
+	return s.ids(`SELECT item_id FROM items WHERE name_src <> 'addon' ORDER BY item_id LIMIT ?`, limit)
+}
+
+// SaveDocNames заводит предметы из документов AHledger (результаты рецептов, реагенты и т.п.)
+// с английским названием, чтобы для них тоже искались русские.
+func (s *Store) SaveDocNames(names map[int64]string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	st, err := tx.Prepare(`INSERT INTO items (item_id, name, name_lc, name_en) VALUES (?, '', '', ?)
+		ON CONFLICT(item_id) DO UPDATE SET name_en = CASE WHEN items.name_en = '' THEN excluded.name_en ELSE items.name_en END`)
+	if err != nil {
+		return err
+	}
+	for id, name := range names {
+		if _, err := st.Exec(id, name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ids(q string, args ...any) ([]int64, error) {

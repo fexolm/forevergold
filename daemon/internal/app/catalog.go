@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -32,12 +33,60 @@ var histRanges = map[string]struct {
 // SyncCatalog докачивает английскую справку AHledger и русские названия Wowhead для предметов с ценами.
 func (a *App) SyncCatalog(ctx context.Context) {
 	metaN, err := a.syncMeta(ctx)
+	if err == nil {
+		err = a.syncDocNames()
+	}
 	if err != nil {
 		a.report("catalog", "", err)
 		return
 	}
 	ruN, ruErr := a.syncRuNames(ctx)
+	// Список предметов для аддона мог пополниться: переписываем файл цен вместе с ним.
+	a.mu.Lock()
+	pt := a.lastTable
+	a.mu.Unlock()
+	if pt != nil {
+		if err := a.WriteAddonPrices(pt); err != nil {
+			log.Printf("запись в аддон: %v", err)
+		}
+	}
 	a.report("catalog", fmt.Sprintf("справка %d, русских названий %d", metaN, ruN), ruErr)
+}
+
+// syncDocNames заводит предметы, которые упоминаются в документах AHledger, но могут не продаваться
+// (результаты рецептов, реагенты): им тоже нужны русские названия.
+func (a *App) syncDocNames() error {
+	names := map[int64]string{}
+	for kind := range a.docPaths() {
+		_, body, err := a.Store.Doc(kind)
+		if err != nil || body == "" {
+			continue
+		}
+		var doc any
+		if json.Unmarshal([]byte(body), &doc) == nil {
+			collectNames(doc, names)
+		}
+	}
+	return a.Store.SaveDocNames(names)
+}
+
+// collectNames собирает пары id → name из любого объекта документа.
+func collectNames(v any, out map[int64]string) {
+	switch x := v.(type) {
+	case map[string]any:
+		id, ok1 := x["id"].(float64)
+		name, ok2 := x["name"].(string)
+		if ok1 && ok2 && id > 0 && name != "" {
+			out[int64(id)] = name
+		}
+		for _, c := range x {
+			collectNames(c, out)
+		}
+	case []any:
+		for _, c := range x {
+			collectNames(c, out)
+		}
+	}
 }
 
 func (a *App) syncMeta(ctx context.Context) (int, error) {

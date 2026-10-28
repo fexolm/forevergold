@@ -296,6 +296,19 @@ func (a *App) WriteAddonPrices(pt *ahledger.PriceTable) error {
 	text := strings.ReplaceAll(string(pt.Raw), "]==]", "")
 	lua := fmt.Sprintf("-- Сгенерировано forevergold.exe %s. Данные: https://ahledger.com\nForeverGold_AHLedgerRaw = [==[\n%s\n]==]\n",
 		time.Now().Format(time.RFC3339), text)
+	// Предметы без названия из клиента: аддон спросит их у игры (новых предметов Forever нет на Wowhead).
+	if want, err := a.Store.WantNames(50000); err == nil && len(want) > 0 {
+		var b strings.Builder
+		b.WriteString("ForeverGold_WantNames = {")
+		for i, id := range want {
+			if i%20 == 0 {
+				b.WriteString("\n")
+			}
+			fmt.Fprintf(&b, "%d,", id)
+		}
+		b.WriteString("\n}\n")
+		lua += b.String()
+	}
 	return writeAtomic(filepath.Join(dir, "AHLedgerPrices.lua"), []byte(lua))
 }
 

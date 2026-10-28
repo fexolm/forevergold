@@ -160,10 +160,12 @@ C_Item.GetItemNameByID = function(id) return clientNames[id] end
 local requested = {}
 C_Item.RequestLoadItemDataByID = function(id) requested[id] = true end
 ForeverGoldDB.export.names = {}
+ForeverGold_WantNames = { 7000 }
 ns.Names:Start()
 ns.Names:Step()
 check(ForeverGoldDB.export.names[3000] == "Хлам", "название из кэша клиента")
 check(requested[2447] and ForeverGoldDB.export.names[2447] == nil, "незагруженный предмет запрошен у клиента")
+check(requested[7000], "предметы из списка демона тоже запрошены")
 clientNames[2447] = "Мироцвет"
 fire("GET_ITEM_INFO_RECEIVED", 2447, true)
 check(ForeverGoldDB.export.names[2447] == "Мироцвет", "название после GET_ITEM_INFO_RECEIVED")

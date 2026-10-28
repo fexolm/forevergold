@@ -31,11 +31,21 @@ function Names:Start()
 	local known = names()
 	ForeverGoldDB.export.locale = GetLocale and GetLocale() or nil
 	self.queue = {}
-	for itemID in pairs(ns.PriceDB.ahledger or {}) do
-		if not known[itemID] then
+	local seen = {}
+	local function add(itemID)
+		if not known[itemID] and not seen[itemID] then
+			seen[itemID] = true
 			table.insert(self.queue, itemID)
 		end
 	end
+	for itemID in pairs(ns.PriceDB.ahledger or {}) do
+		add(itemID)
+	end
+	-- Демон добавляет предметы из рецептов и сделок, которых может не быть в таблице цен.
+	for _, itemID in ipairs(ForeverGold_WantNames or {}) do
+		add(itemID)
+	end
+	ForeverGold_WantNames = nil
 	table.sort(self.queue)
 	if #self.queue > 0 and C_Timer.NewTicker then
 		self.ticker = C_Timer.NewTicker(STEP, function() Names:Step() end)
