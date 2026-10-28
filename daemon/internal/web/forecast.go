@@ -79,8 +79,10 @@ func (s *Server) opportunities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	list := []Opportunity{}
+	// Цена старше 3 часов уже не «сейчас»: AHledger перестал обновляться или лот исчез с аукциона.
+	fresh := time.Now().Add(-3 * time.Hour).Unix()
 	for _, l := range candidates {
-		if l.Min <= 0 {
+		if l.Min <= 0 || l.T < fresh {
 			continue
 		}
 		f, err := s.buildForecast(l.ItemID, 3*24*time.Hour)
