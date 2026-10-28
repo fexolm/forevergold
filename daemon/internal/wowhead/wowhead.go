@@ -1,6 +1,6 @@
-// Package wowhead берёт русские названия предметов Classic из тултипов Wowhead.
-// AHledger отдаёт только английские названия; предметы, новые в Forever, Wowhead не знает,
-// их русские названия приходят из аддона (клиент игры на русском).
+// Package wowhead берёт русские названия предметов из тултипов Wowhead.
+// AHledger отдаёт только английские названия. Названия из клиента игры (аддон) главнее:
+// они точно совпадают с тем, что видно в игре.
 package wowhead
 
 import (
@@ -13,7 +13,8 @@ import (
 	"unicode"
 )
 
-const tooltipURL = "https://nether.wowhead.com/classic/tooltip/item/%d?dataEnv=4&locale=7"
+// dataEnv=16: база WoW: Forever на Wowhead (и старые предметы Classic, и новые предметы Forever).
+const tooltipURL = "https://nether.wowhead.com/tooltip/item/%d?dataEnv=16&locale=7"
 
 type Client struct {
 	HTTP *http.Client

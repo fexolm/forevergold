@@ -39,6 +39,8 @@ var migrations = []string{
 		t       INTEGER NOT NULL,
 		PRIMARY KEY (item_id, rng)
 	) WITHOUT ROWID`,
+	// Предметы, которых Wowhead не знал, переспрашиваем при каждом запуске: база там пополняется.
+	`UPDATE items SET ru_tried = 0 WHERE name = ''`,
 }
 
 func (s *Store) migrate() error {
