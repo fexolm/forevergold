@@ -267,7 +267,7 @@ func (s *Store) Series(itemID int64, since time.Time) ([]Point, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Point
+	out := []Point{}
 	for rows.Next() {
 		var p Point
 		if err := rows.Scan(&p.T, &p.Min, &p.Median, &p.Qty); err != nil {
@@ -291,7 +291,7 @@ func (s *Store) OwnSeries(itemID int64, since time.Time) ([]OwnPoint, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []OwnPoint
+	out := []OwnPoint{}
 	for rows.Next() {
 		var p OwnPoint
 		if err := rows.Scan(&p.T, &p.Min, &p.Qty, &p.Book); err != nil {
@@ -320,7 +320,7 @@ const latestCols = `l.item_id, COALESCE(i.name, ''), l.t, l.min, l.median, l.qty
 
 func scanLatest(rows *sql.Rows) ([]Latest, error) {
 	defer rows.Close()
-	var out []Latest
+	out := []Latest{}
 	for rows.Next() {
 		var l Latest
 		if err := rows.Scan(&l.ItemID, &l.Name, &l.T, &l.Min, &l.Median, &l.Qty, &l.Median7, &l.Median30, &l.Low30, &l.High30, &l.Sales10); err != nil {
