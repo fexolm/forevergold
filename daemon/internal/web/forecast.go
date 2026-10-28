@@ -22,8 +22,26 @@ func (s *Server) buildForecast(itemID int64, horizon time.Duration) (predict.For
 	if err != nil {
 		return predict.Forecast{}, err
 	}
-	hist := make([]predict.Sample, 0, len(series))
+	// Часовая история AHledger плюс свои снимки после неё: так прогноз есть сразу, без недель ожидания.
+	hourly, err := s.App.Store.Hist(itemID, 3600, now.Add(-forecastHistory))
+	if err != nil {
+		return predict.Forecast{}, err
+	}
+	last := int64(0)
+	for _, h := range hourly {
+		last = h.T
+	}
+	merged := make([]store.Point, 0, len(hourly)+len(series))
+	for _, h := range hourly {
+		merged = append(merged, store.Point{T: h.T, Min: h.Min, Median: h.Median})
+	}
 	for _, p := range series {
+		if p.T > last+1800 {
+			merged = append(merged, p)
+		}
+	}
+	hist := make([]predict.Sample, 0, len(merged))
+	for _, p := range merged {
 		// Прогнозируем минимальную цену: по ней покупаем сейчас и около неё же выставляем при продаже.
 		// Сравнивать текущий минимум с медианой нельзя: минимум всегда ниже, и «выгода» была бы у всех.
 		price := p.Min

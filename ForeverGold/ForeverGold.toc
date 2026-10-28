@@ -10,6 +10,7 @@ AHLedgerPrices.lua
 Core.lua
 PriceDB.lua
 Scanner.lua
+Names.lua
 Deals.lua
 Buyer.lua
 UI.lua

@@ -79,7 +79,12 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
-	return &Store{DB: db}, nil
+	st := &Store{DB: db}
+	if err := st.migrate(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return st, nil
 }
 
 func (s *Store) Close() error { return s.DB.Close() }
@@ -168,8 +173,8 @@ func (s *Store) SaveNames(names map[int64]string) error {
 		return err
 	}
 	defer tx.Rollback()
-	st, err := tx.Prepare(`INSERT INTO items (item_id, name, name_lc) VALUES (?, ?, ?)
-		ON CONFLICT(item_id) DO UPDATE SET name=excluded.name, name_lc=excluded.name_lc`)
+	st, err := tx.Prepare(`INSERT INTO items (item_id, name, name_lc, name_src) VALUES (?, ?, ?, 'addon')
+		ON CONFLICT(item_id) DO UPDATE SET name=excluded.name, name_lc=excluded.name_lc, name_src='addon'`)
 	if err != nil {
 		return err
 	}
@@ -221,7 +226,7 @@ func (s *Store) UseMarket(market string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, q := range []string{`DELETE FROM snapshots`, `DELETE FROM latest`, `DELETE FROM docs`} {
+	for _, q := range []string{`DELETE FROM snapshots`, `DELETE FROM latest`, `DELETE FROM docs`, `DELETE FROM hist`, `DELETE FROM hist_fetch`} {
 		if _, err := tx.Exec(q); err != nil {
 			return err
 		}
@@ -305,6 +310,10 @@ func (s *Store) OwnSeries(itemID int64, since time.Time) ([]OwnPoint, error) {
 type Latest struct {
 	ItemID   int64  `json:"itemId"`
 	Name     string `json:"name"`
+	NameEn   string `json:"nameEn"`
+	Quality  string `json:"quality"`
+	Icon     string `json:"icon"`
+	Class    string `json:"itemClass"`
 	T        int64  `json:"t"`
 	Min      int64  `json:"min"`
 	Median   int64  `json:"median"`
@@ -316,14 +325,14 @@ type Latest struct {
 	Sales10  int64  `json:"sales10"`
 }
 
-const latestCols = `l.item_id, COALESCE(i.name, ''), l.t, l.min, l.median, l.qty, l.median7, l.median30, l.low30, l.high30, l.sales10`
+var latestCols = `l.item_id, ` + fmt.Sprintf(displayName, "l.item_id") + `, COALESCE(i.name_en, ''), COALESCE(i.quality, ''), COALESCE(i.icon, ''), COALESCE(i.class, ''), l.t, l.min, l.median, l.qty, l.median7, l.median30, l.low30, l.high30, l.sales10`
 
 func scanLatest(rows *sql.Rows) ([]Latest, error) {
 	defer rows.Close()
 	out := []Latest{}
 	for rows.Next() {
 		var l Latest
-		if err := rows.Scan(&l.ItemID, &l.Name, &l.T, &l.Min, &l.Median, &l.Qty, &l.Median7, &l.Median30, &l.Low30, &l.High30, &l.Sales10); err != nil {
+		if err := rows.Scan(&l.ItemID, &l.Name, &l.NameEn, &l.Quality, &l.Icon, &l.Class, &l.T, &l.Min, &l.Median, &l.Qty, &l.Median7, &l.Median30, &l.Low30, &l.High30, &l.Sales10); err != nil {
 			return nil, err
 		}
 		out = append(out, l)
@@ -348,8 +357,9 @@ func (s *Store) Search(q string, limit int) ([]Latest, error) {
 	q = strings.TrimSpace(q)
 	where, args := "1=1", []any{}
 	if q != "" {
-		where = "(CAST(l.item_id AS TEXT) = ? OR i.name_lc LIKE ?)"
-		args = append(args, q, "%"+strings.ToLower(q)+"%")
+		where = "(CAST(l.item_id AS TEXT) = ? OR i.name_lc LIKE ? OR LOWER(i.name_en) LIKE ?)"
+		like := "%" + strings.ToLower(q) + "%"
+		args = append(args, q, like, like)
 	}
 	args = append(args, limit)
 	rows, err := s.DB.Query(`SELECT `+latestCols+` FROM latest l LEFT JOIN items i ON i.item_id = l.item_id
@@ -374,7 +384,7 @@ func (s *Store) Movers(minSales10 int64, limit int) ([]Latest, error) {
 // Liquid: самые продаваемые предметы с продажами не меньше minSales10/10 в день.
 func (s *Store) Liquid(minSales10 int64, limit int) ([]Latest, error) {
 	rows, err := s.DB.Query(`SELECT `+latestCols+` FROM latest l LEFT JOIN items i ON i.item_id = l.item_id
-		WHERE l.sales10 >= ? ORDER BY l.sales10 DESC LIMIT ?`, minSales10, limit)
+		WHERE l.sales10 >= ? ORDER BY l.sales10 DESC, l.qty DESC LIMIT ?`, minSales10, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -391,4 +401,14 @@ func (s *Store) Counts() (map[string]int64, error) {
 		out[table] = n
 	}
 	return out, nil
+}
+
+// PricesAsOf: время последнего снимка таблицы цен (ноль, если цен нет).
+func (s *Store) PricesAsOf() time.Time {
+	var t int64
+	s.DB.QueryRow(`SELECT COALESCE(MAX(t), 0) FROM latest`).Scan(&t)
+	if t == 0 {
+		return time.Time{}
+	}
+	return time.Unix(t, 0)
 }
