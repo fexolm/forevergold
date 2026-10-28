@@ -85,12 +85,15 @@ function table(columns, rows, onRow) {
 // ---------- Обзор ----------
 
 async function showOverview() {
-	const [status, movers] = await Promise.all([api("/api/status"), api("/api/movers")]);
+	const [status, movers, deals] = await Promise.all([api("/api/status"), api("/api/movers"), api("/api/doc/deals").catch(() => null)]);
 	const jobs = Object.entries(status.jobs).map(([name, j]) => ({
 		name, ok: j.lastOk ? ago(Date.parse(j.lastOk) / 1000) : "никогда", note: j.note || "", error: j.error || "",
 	}));
 	const c = status.counts || {};
 	view.replaceChildren(
+		marketClosed(deals) ? panel("Рынок ещё не открыт",
+			el("p", {}, `AHledger пишет, что ${deals.marketLabel || status.market} ещё не открыт, поэтому цен, графиков и прогнозов пока нет. Демон уже работает и начнёт копить историю сам, как только появятся первые сканы.`),
+			el("p", { class: "muted" }, "Свои сканы аддоном попадают сюда сразу: стакан предмета на его странице появится после полного скана на аукционе и /reload.")) : "",
 		panel("Состояние",
 			el("div", { class: "grid" },
 				stat("Рынок", status.market, "small"),
@@ -174,16 +177,115 @@ async function showItem(id) {
 
 	const priceBox = el("div", { class: "chart" });
 	const qtyBox = el("div", { class: "chart" });
+	const forecastBox = el("div");
 	view.replaceChildren(
 		searchPanel,
 		panel(title + " (" + id + ")", stats),
 		panel("Цена", ranges, priceBox, el("div", { class: "legend-note" }, "Минимум и медиана по снимкам AHledger, красные точки: минимум в ваших сканах.")),
+		panel("Прогноз минимальной цены на 7 дней", forecastBox),
 		panel("Количество на аукционе", qtyBox),
 		panel("Стакан последнего скана" + (data.bookTime ? " (" + ago(data.bookTime) + ")" : ""), bookView(data.book)),
 	);
 	clearCharts();
 	drawPrice(priceBox, data);
 	drawQty(qtyBox, data);
+	const [fc, recent] = await Promise.all([api(`/api/item/${id}/forecast`), api(`/api/item/${id}?range=7d`)]);
+	forecastView(forecastBox, fc, recent.series || [], l);
+}
+
+const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+
+function pct(v, digits = 1) {
+	const sign = v > 0 ? "+" : "";
+	return sign + (v * 100).toFixed(digits) + "%";
+}
+
+function slotText(s) {
+	return WEEKDAYS[s.weekday] + " " + String(s.hour).padStart(2, "0") + ":00";
+}
+
+// Полоса из ячеек: цвет и подпись показывают, насколько цена в этот час/день выше или ниже обычной.
+function profileStrip(labels, factors) {
+	const cells = factors.map((f, i) => {
+		const d = f - 1;
+		const alpha = Math.min(Math.abs(d) / 0.15, 1) * 0.55;
+		const color = d < 0 ? `rgba(46,125,50,${alpha})` : `rgba(198,40,40,${alpha})`;
+		return el("div", { class: "cell", style: `background:${color}`, title: labels[i] + ": " + pct(d) },
+			el("div", { class: "lbl" }, labels[i]), el("div", { class: "val" }, pct(d, 0)));
+	});
+	return el("div", { class: "strip", style: `grid-template-columns:repeat(${factors.length},1fr)` }, cells);
+}
+
+function forecastView(box, fc, recent, latest) {
+	if (!fc.ok) {
+		box.replaceChildren(el("p", { class: "muted" }, (fc.note || "Прогноз пока недоступен") + ". История копится с момента запуска демона: каждые 15 минут по снимку."));
+		return;
+	}
+	const chartBox = el("div", { class: "chart" });
+	const nowPrice = latest && latest.min;
+	const best = fc.points.reduce((a, p) => (p.mid > a.mid ? p : a), fc.points[0]);
+	const worst = fc.points.reduce((a, p) => (p.mid < a.mid ? p : a), fc.points[0]);
+	box.replaceChildren(
+		el("div", { class: "grid" },
+			stat("Тренд", pct(fc.trendPerDay) + " в день", fc.trendPerDay >= 0 ? "good" : "bad"),
+			stat("Разброс", "±" + (fc.volatility * 100).toFixed(1) + "%"),
+			stat("Обычно дешевле всего", slotText(fc.cheapestSlot)),
+			stat("Обычно дороже всего", slotText(fc.dearestSlot)),
+			stat("Минимум прогноза", gold(worst.mid) + ", " + fmtTime(worst.t)),
+			stat("Максимум прогноза", gold(best.mid) + ", " + fmtTime(best.t)),
+		),
+		chartBox,
+		el("div", { class: "legend-note" }, "Серая полоса: 80% вилка прогноза минимальной цены. Прогноз строится по истории за " + fc.days.toFixed(0) +
+			" дн.: тренд за 7 дней (затухает за пару дней), профиль по часам и дням недели. Это статистика, а не гарантия: разовые события (патчи, открытие рейдов) она не видит."),
+		el("h3", {}, "Цена по часам суток (отклонение от обычной)"),
+		profileStrip([...Array(24).keys()].map(h => String(h).padStart(2, "0")), fc.hourly),
+		el("h3", {}, "По дням недели"),
+		profileStrip([1, 2, 3, 4, 5, 6, 0].map(d => WEEKDAYS[d]), [1, 2, 3, 4, 5, 6, 0].map(d => fc.weekday[d])),
+	);
+	if (nowPrice && best.mid * 0.95 > nowPrice) {
+		box.prepend(el("p", { class: "good" }, `Купив сейчас по ${gold(nowPrice)} и продав около ${fmtTime(best.t)}, по прогнозу получите ${pct(best.mid * 0.95 / nowPrice - 1, 0)} после комиссии.`));
+	}
+
+	const times = [...recent.map(p => p.t), ...fc.points.map(p => p.t)];
+	const hist = [...recent.map(p => p.min / 10000), ...fc.points.map(() => null)];
+	const pad = recent.map(() => null);
+	const mid = [...pad, ...fc.points.map(p => p.mid / 10000)];
+	const low = [...pad, ...fc.points.map(p => p.low / 10000)];
+	const high = [...pad, ...fc.points.map(p => p.high / 10000)];
+	const money = (u, v) => v == null ? "—" : gold(v * 10000);
+	const u = new uPlot({
+		width: chartWidth(chartBox), height: 260,
+		axes: axes("цена", true),
+		series: [
+			timeSeries,
+			{ label: "Минимум", stroke: css("--series-min"), width: 2, spanGaps: true, value: money },
+			{ label: "Прогноз", stroke: css("--series-median"), width: 2, dash: [6, 4], value: money },
+			{ label: "Нижняя граница", stroke: "transparent", value: money },
+			{ label: "Верхняя граница", stroke: "transparent", value: money },
+		],
+		bands: [{ series: [4, 3], fill: "rgba(128,128,128,0.18)" }],
+	}, [times, hist, mid, low, high], chartBox);
+	charts.push(u);
+}
+
+// ---------- Прогнозы ----------
+
+async function showForecasts() {
+	const list = await api("/api/opportunities");
+	const rows = list.map(o => ({ ...enrich(o), sellMid: o.sellMid, sellAt: o.sellAt, gain: o.gain, trend: o.trendPerDay, vol: o.volatility, cheapest: slotText(o.cheapest) }));
+	view.replaceChildren(panel("Подешевле сейчас, дороже по прогнозу на 3 дня",
+		el("p", { class: "muted" }, "Ликвидные предметы, где прогноз минимальной цены в ближайшие 3 дня после комиссии 5% выше текущего минимума хотя бы на 10%. Чем больше разброс, тем меньше доверия: доходность меньше разброса это почти шум."),
+		rows.length ? table([
+			{ key: "name", title: "Предмет" },
+			{ key: "min", title: "Мин сейчас", num: true, fmt: gold },
+			{ key: "sellMid", title: "Прогноз", num: true, fmt: gold },
+			{ key: "sellAt", title: "Когда", fmt: v => fmtTime(v) },
+			{ key: "gain", title: "Доходность", num: true, fmt: v => el("span", { class: "good" }, pct(v, 0)) },
+			{ key: "trend", title: "Тренд/день", num: true, fmt: v => pct(v) },
+			{ key: "vol", title: "Разброс", num: true, fmt: v => "±" + (v * 100).toFixed(0) + "%" },
+			{ key: "cheapest", title: "Дешевле всего обычно" },
+			{ key: "sales", title: "Продаж/день", num: true, fmt: v => num(v, 1) },
+		], rows, r => itemLink(r.itemId)) : el("p", { class: "muted" }, "Пока ничего: для прогноза нужно хотя бы 3 дня истории.")));
 }
 
 function css(name) {
@@ -350,8 +452,25 @@ async function showDoc(kind, title) {
 	const notes = Array.isArray(doc.notes) ? el("ul", { class: "muted" }, doc.notes.map(n => el("li", {}, n))) : "";
 	const body = rows.length
 		? table(autoColumns(rows), rows, r => { const id = rowItemId(r); if (id) itemLink(id); })
-		: el("pre", { style: "white-space:pre-wrap" }, JSON.stringify(doc, null, 2).slice(0, 20000));
+		: emptyDoc(doc);
 	view.replaceChildren(panel(title || DOC_TITLES[kind] || kind, meta, notes, body));
+}
+
+// Пустой ответ AHledger: объясняем причину словами, сырой JSON прячем под спойлер.
+function emptyDoc(doc) {
+	const closed = marketClosed(doc);
+	const text = closed
+		? `Рынок ${doc.marketLabel || doc.market} ещё не открыт, поэтому у AHledger по нему пока нет цен. Данные появятся сами после открытия серверов.`
+		: "AHledger пока ничего не нашёл по этому запросу." + (doc && doc.message ? " Ответ сервиса: " + doc.message : "");
+	return el("div", {},
+		el("p", {}, text),
+		doc && doc.page ? el("p", {}, el("a", { href: doc.page, target: "_blank", rel: "noopener" }, "Открыть на AHledger")) : "",
+		el("details", { class: "muted" }, el("summary", {}, "Ответ сервиса целиком"),
+			el("pre", { class: "raw" }, JSON.stringify(doc, null, 2).slice(0, 20000))));
+}
+
+function marketClosed(doc) {
+	return !!(doc && typeof doc.marketStatus === "string" && /not open/i.test(doc.marketStatus));
 }
 
 async function showCrafting(prof) {
@@ -377,6 +496,7 @@ async function route() {
 		else if (parts[0] === "item") await showItem(parts[1]);
 		else if (parts[0] === "doc") await showDoc(parts[1]);
 		else if (parts[0] === "crafting") await showCrafting(parts[1]);
+		else if (parts[0] === "forecasts") await showForecasts();
 		else await showOverview();
 	} catch (e) {
 		view.replaceChildren(panel("Ошибка", el("p", { class: "err" }, String(e.message || e))));
